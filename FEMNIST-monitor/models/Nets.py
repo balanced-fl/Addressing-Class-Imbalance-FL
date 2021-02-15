@@ -1,0 +1,197 @@
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+
+class MLP(nn.Module):
+    def __init__(self, dim_in, dim_hidden, dim_out):
+        super(MLP, self).__init__()
+        self.layer_input = nn.Linear(dim_in, dim_hidden)
+        self.relu = nn.ReLU()
+        #self.dropout = nn.Dropout()
+        self.layer_hidden = nn.Linear(dim_hidden, dim_out)
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        x = x.view(-1, x.shape[1]*x.shape[-2]*x.shape[-1])
+        x = self.layer_input(x)
+        # x = self.dropout(x)
+        x = self.relu(x)
+        x = self.layer_hidden(x)
+        return self.softmax(x)
+
+
+class CNNMnist(nn.Module):
+    def __init__(self, args):
+        super(CNNMnist, self).__init__()
+        self.conv1 = nn.Conv2d(args.num_channels, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.conv2_drop = nn.Dropout2d()
+        self.fc1 = nn.Linear(320, 50)
+        self.fc2 = nn.Linear(50, args.num_classes)
+
+    def forward(self, x):
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+        x = x.view(-1, x.shape[1]*x.shape[2]*x.shape[3])
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
+
+
+class CNNCifar(nn.Module):
+    def __init__(self, args):
+        super(CNNCifar, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, args.num_classes)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return F.log_softmax(x, dim=1)
+
+
+class BasicBlock(torch.nn.Module):
+    """Basic Block for resnet 18 and resnet 34
+    """
+
+    # BasicBlock and BottleNeck block
+    # have different output size
+    # we use class attribute expansion
+    # to distinct
+    expansion = 1
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+
+        # residual function
+        self.residual_function = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels * BasicBlock.expansion, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels * BasicBlock.expansion)
+        )
+
+        # shortcut
+        self.shortcut = nn.Sequential()
+
+        # the shortcut output dimension is not the same with residual function
+        # use 1*1 convolution to match the dimension
+        if stride != 1 or in_channels != BasicBlock.expansion * out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * BasicBlock.expansion, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels * BasicBlock.expansion)
+            )
+
+    def forward(self, x):
+        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
+
+
+class BottleNeck(torch.nn.Module):
+    """Residual block for resnet over 50 layers
+    """
+    expansion = 4
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+        self.residual_function = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, stride=stride, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels * BottleNeck.expansion, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels * BottleNeck.expansion),
+        )
+
+        self.shortcut = nn.Sequential()
+
+        if stride != 1 or in_channels != out_channels * BottleNeck.expansion:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * BottleNeck.expansion, stride=stride, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels * BottleNeck.expansion)
+            )
+
+    def forward(self, x):
+        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
+
+
+class ResNet(torch.nn.Module):
+    def __init__(self, block, num_block, num_classes):
+        super().__init__()
+
+        self.in_channels = 64
+
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True))
+        # we use a different inputsize than the original paper
+        # so conv2_x's stride is 1
+        self.conv2_x = self._make_layer(block, 64, num_block[0], 1)
+        self.conv3_x = self._make_layer(block, 128, num_block[1], 2)
+        self.conv4_x = self._make_layer(block, 256, num_block[2], 2)
+        self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc1 = nn.Linear(512 * block.expansion, num_classes)
+
+    def _make_layer(self, block, out_channels, num_blocks, stride):
+        """make resnet layers(by layer i didnt mean this 'layer' was the 
+        same as a neuron netowork layer, ex. conv layer), one layer may 
+        contain more than one residual block 
+        Args:
+            block: block type, basic block or bottle neck block
+            out_channels: output depth channel number of this layer
+            num_blocks: how many blocks per layer
+            stride: the stride of the first block of this layer
+
+        Return:
+            return a resnet layer
+        """
+
+        # we have num_block blocks per layer, the first block
+        # could be 1 or 2, other blocks would always be 1
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_channels, out_channels, stride))
+            self.in_channels = out_channels * block.expansion
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        output = self.conv1(x)
+        output = self.conv2_x(output)
+        output = self.conv3_x(output)
+        output = self.conv4_x(output)
+        output = self.conv5_x(output)
+        output = self.avg_pool(output)
+        output = output.view(output.size(0), -1)
+        output = self.fc1(output)
+
+        return output
+
+
+class Net(torch.nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+
+        self.resnet = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=26)
+
+    def forward(self, x):
+        # res = conv3_out.view(conv3_out.size(0), -1)
+        # x = torch.tensor(x, dtype=torch.float32)
+        out = self.resnet(x)
+        return out
+
