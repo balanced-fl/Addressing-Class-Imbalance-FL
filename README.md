@@ -14,6 +14,7 @@ cd ./FEMNIST-4-Losses/
 python3 main_nn.py --loss ce/focal/ratio/ghm
 ```
 
+## Citation
 If you find our work is helpful for your research, please cite our paper.
 ```
 @inproceedings{wang2021addressing,
