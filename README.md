@@ -3,13 +3,13 @@ This is the code for our AAAI-2021 paper: [Addressing Class Imbalance in Federat
 
 ## Run the code
 To run the monitoring scheme, you can
-```
+```console
 cd ./FEMNIST-monitor/
 python3 main_nn.py
 ```
 
 To load different loss functions on federated learning, you can
-```
+```console
 cd ./FEMNIST-4-Losses/
 python3 main_nn.py --loss ce/focal/ratio/ghm
 ```
